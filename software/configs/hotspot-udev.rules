@@ -1,0 +1,1 @@
+SUBSYSTEM=="net", ENV{DEVTYPE}=="wlan", ACTION=="add", NAME="hotspot", RUN+="/opt/apertus/axiom-firmware/software/configs/hotspot-udev.rules"
