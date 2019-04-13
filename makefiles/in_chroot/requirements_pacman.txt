@@ -34,3 +34,8 @@ python-numpy
 
 # control daemon
 clang
+
+# wifi tools
+iwlist
+wpa_supplicant
+networkmanager
