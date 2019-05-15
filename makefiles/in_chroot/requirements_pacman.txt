@@ -36,6 +36,6 @@ python-numpy
 clang
 
 # wifi tools
-iwlist
+iw
 wpa_supplicant
 networkmanager
