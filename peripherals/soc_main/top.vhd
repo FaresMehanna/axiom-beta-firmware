@@ -14,7 +14,9 @@
 --    mkdir -p build.vivado
 --    (cd build.vivado && vivado -mode tcl -source ../vivado.tcl)
 ----------------------------------------------------------------------------
-
+--  The original file was intended to be used with HDMI module.
+--  The current module is intended to work with USB3.0 module.
+----------------------------------------------------------------------------
 
 library IEEE;
 use IEEE.std_logic_1164.ALL;
@@ -42,6 +44,7 @@ use work.vec_mat_pkg.ALL;	-- Vector/Matrix
 use work.helper_pkg.ALL;	-- Vivado Attributes
 use work.vec_mat_pkg.ALL;	-- Vector Types
 
+use work.lj92_pll.ALL;      -- LJ92 PLL Configs
 
 entity top is
     port (
@@ -76,12 +79,6 @@ entity top is
 	--
 	hdmi_south_d_p : out std_logic_vector (2 downto 0);
 	hdmi_south_d_n : out std_logic_vector (2 downto 0);
-	--
-    /*	hdmi_north_clk_p : out std_logic;
-	hdmi_north_clk_n : out std_logic;
-	--
-	hdmi_north_d_p : out std_logic_vector (2 downto 0);
-	hdmi_north_d_n : out std_logic_vector (2 downto 0);	*/
 	--
 	debug_tmds: out std_logic_vector (3 downto 0);
 	debug : out std_logic_vector (3 downto 0)
@@ -264,14 +261,12 @@ architecture RTL of top is
     signal cmv_outclk : std_ulogic;
 
     --------------------------------------------------------------------
-    -- HDMI MMCM Signals
+    -- LJ92 PLL Signals
     --------------------------------------------------------------------
 
-    signal hdmi_pll_locked : std_ulogic;
+    signal lj92_pll_locked : std_ulogic;
 
-    signal tmds_clk : std_ulogic;
-    signal hdmi_clk : std_ulogic;
-    signal data_clk : std_ulogic;
+    signal lj92_clk : std_ulogic;
 
     --------------------------------------------------------------------
     -- LVDS IDELAY Signals
@@ -478,15 +473,15 @@ architecture RTL of top is
     alias raddr_ccnt : std_logic_vector (11 downto 0)
 	is reg_ogen(10)(11 downto 0);
 
-    alias fifo_hdmi_reset : std_logic is reg_ogen(11)(0);
+    alias fifo_lj92_reset : std_logic is reg_ogen(11)(0);
 
     alias ogen_rblock : std_logic is reg_ogen(11)(4);
     alias ogen_rreset : std_logic is reg_ogen(11)(5);
     alias ogen_rload : std_logic is reg_ogen(11)(6);
     alias ogen_rswitch : std_logic is reg_ogen(11)(7);
 
-    alias hdmi_pll_reset : std_logic is reg_ogen(11)(8);
-    alias hdmi_pll_pwrdwn : std_logic is reg_ogen(11)(9);
+    alias lj92_pll_reset : std_logic is reg_ogen(11)(8);
+    alias lj92_pll_pwrdwn : std_logic is reg_ogen(11)(9);
 
     alias rbuf_enable : std_logic_vector (3 downto 0)
 	is reg_ogen(11)(15 downto 12);
@@ -525,30 +520,6 @@ architecture RTL of top is
     constant ISCN_SIZE : natural := 2;
 
     signal reg_iscn : reg32_a(0 to ISCN_SIZE - 1);
-
-    --------------------------------------------------------------------
-    -- Matrix Register File Signals
-    --------------------------------------------------------------------
-
-    constant MAT_SPLIT : natural := 8;
-    constant OMAT_SIZE : natural := 36;
-
-    signal reg_omat : reg32_a(0 to OMAT_SIZE - 1);
-
-    constant IMAT_SIZE : natural := 1;
-
-    signal reg_imat : reg32_a(0 to IMAT_SIZE - 1);
-
-    --------------------------------------------------------------------
-    -- Color Matrix Signals
-    --------------------------------------------------------------------
-
-    signal mat_values : mat16_4x4;
-    signal mat_adjust : mat16_4x4;
-    signal mat_offset : vec16_4;
-
-    signal mat_v_in   : vec12_4;
-    signal mat_v_out  : vec12_4;
 
     --------------------------------------------------------------------
     -- Override Signals
@@ -733,68 +704,53 @@ architecture RTL of top is
     signal data_rcn_ch3 : std_logic_vector (15 downto 0);
 
     --------------------------------------------------------------------
-    -- HDMI FIFO Signals
+    -- LJ92 FIFO Signals
     --------------------------------------------------------------------
 
-    signal fifo_hdmi_in : std_logic_vector (DATA_WIDTH - 1 downto 0);
-    signal fifo_hdmi_out : std_logic_vector (DATA_WIDTH - 1 downto 0);
+    signal fifo_lj92_in : std_logic_vector (DATA_WIDTH - 1 downto 0);
+    signal fifo_lj92_out : std_logic_vector (DATA_WIDTH - 1 downto 0);
 
-    constant HDMI_CWIDTH : natural := cwidth_f(DATA_WIDTH, "36Kb");
+    constant LJ92_CWIDTH : natural := cwidth_f(DATA_WIDTH, "36Kb");
 
-    signal fifo_hdmi_rdcount : std_logic_vector (HDMI_CWIDTH - 1 downto 0);
-    signal fifo_hdmi_wrcount : std_logic_vector (HDMI_CWIDTH - 1 downto 0);
+    signal fifo_lj92_rdcount : std_logic_vector (LJ92_CWIDTH - 1 downto 0);
+    signal fifo_lj92_wrcount : std_logic_vector (LJ92_CWIDTH - 1 downto 0);
 
-    signal fifo_hdmi_wclk : std_logic;
-    signal fifo_hdmi_wen : std_logic;
-    signal fifo_hdmi_high : std_logic;
-    signal fifo_hdmi_full : std_logic;
-    signal fifo_hdmi_wrerr : std_logic;
+    signal fifo_lj92_wclk : std_logic;
+    signal fifo_lj92_wen : std_logic;
+    signal fifo_lj92_high : std_logic;
+    signal fifo_lj92_full : std_logic;
+    signal fifo_lj92_wrerr : std_logic;
 
-    signal fifo_hdmi_rclk : std_logic;
-    signal fifo_hdmi_ren : std_logic;
-    signal fifo_hdmi_low : std_logic;
-    signal fifo_hdmi_empty : std_logic;
-    signal fifo_hdmi_rderr : std_logic;
+    signal fifo_lj92_rclk : std_logic;
+    signal fifo_lj92_ren : std_logic;
+    signal fifo_lj92_low : std_logic;
+    signal fifo_lj92_empty : std_logic;
+    signal fifo_lj92_rderr : std_logic;
 
-    signal fifo_hdmi_rst : std_logic;
-    signal fifo_hdmi_rrdy : std_logic;
-    signal fifo_hdmi_wrdy : std_logic;
+    signal fifo_lj92_rst : std_logic;
+    signal fifo_lj92_rrdy : std_logic;
+    signal fifo_lj92_wrdy : std_logic;
 
-    signal hdmi_enable : std_logic;
+    signal lj92_enable : std_logic;
 
-    signal hdmi_in : std_logic_vector (DATA_WIDTH - 1 downto 0);
+    signal lj92_in : std_logic_vector (DATA_WIDTH - 1 downto 0);
 
-    alias hdmi_ch0 : std_logic_vector (11 downto 0)
-	is hdmi_in (63 downto 52);
-    alias hdmi_ch1 : std_logic_vector (11 downto 0)
-	is hdmi_in (51 downto 40);
-    alias hdmi_ch2 : std_logic_vector (11 downto 0)
-	is hdmi_in (39 downto 28);
-    alias hdmi_ch3 : std_logic_vector (11 downto 0)
-	is hdmi_in (27 downto 16);
-    alias hdmi_ch4 : std_logic_vector (15 downto 0)
-	is hdmi_in (15 downto 0);
+    signal lj92_out : std_logic_vector (63 downto 0);
 
-    signal hdmi_ch4_d : std_logic_vector (15 downto 0);
+    --------------------------------------------------------------------
+    -- LJ92 Signals
+    --------------------------------------------------------------------
+    
+    signal lj92_s_tdata : std_logic_vector (63 downto 0);
+    signal lj92_s_tvalid : std_logic;
+    signal lj92_s_tready : std_logic;
 
-    signal conv_out : std_logic_vector (63 downto 0);
-    signal hdmi_out : std_logic_vector (63 downto 0);
+    signal lj92_m_tdata : std_logic_vector (39 downto 0);
+    signal lj92_m_tvalid : std_logic;
+    signal lj92_m_tready : std_logic;
 
-    signal hd_edata : std_logic_vector(31 downto 0);
-    signal hd_odata : std_logic_vector(31 downto 0);
-    signal hd_sdata : std_logic_vector(31 downto 0);
-
-    signal hd_code : std_logic_vector(63 downto 0);
-
-    alias hd_r : std_logic_vector (11 downto 0)
-	is hd_code (63 downto 52);
-    alias hd_g1 : std_logic_vector (11 downto 0)
-	is hd_code (47 downto 36);
-    alias hd_b : std_logic_vector (11 downto 0)
-	is hd_code (31 downto 20);
-    alias hd_g2 : std_logic_vector (11 downto 0)
-	is hd_code (15 downto 4);
-
+    signal lj92_full_clk : std_logic;
+    signal lj92_full_rst : std_logic;
 
     --------------------------------------------------------------------
     -- HDMI Scan Signals
@@ -916,19 +872,6 @@ architecture RTL of top is
     signal llut_addr : lut12_a (0 to LLUT_COUNT - 1);
     signal llut_dout : lut18_a (0 to LLUT_COUNT - 1);
     signal llut_dout_d : lut18_a (0 to LLUT_COUNT - 1);
-
-    constant DLUT_COUNT : natural := 4;
-
-    signal dlut_addr : lut12_a (0 to DLUT_COUNT - 1);
-    signal dlut_dout : lut16_a (0 to DLUT_COUNT - 1);
-    signal dlut_dout_d : lut16_a (0 to DLUT_COUNT - 1);
-
-    --------------------------------------------------------------------
-    -- BRAM MEM Signals
-    --------------------------------------------------------------------
-
-    signal dmem_addr : std_logic_vector (11 downto 0);
-    signal dmem_dout : std_logic_vector (8 downto 0);
 
 begin
 
@@ -1269,29 +1212,15 @@ begin
 	    lvds_clk => lvds_clk,
 	    word_clk => word_clk );
 
-    hdmi_pll_inst : entity work.hdmi_pll
-	generic map (
-	    -- PLL_CONFIG => HDMI_7425KHZ )
-	    -- PLL_CONFIG => HDMI_5000KHZ )
-	    PLL_CONFIG => HDMI_148500KHZ )
-	port map (
-	    ref_clk_in => clk_100,
-	    --
-	    pll_locked => hdmi_pll_locked,
-	    pll_pwrdwn => hdmi_pll_pwrdwn,
-	    pll_reset => hdmi_pll_reset,
-	    --
-	    tmds_clk => tmds_clk,
-	    hdmi_clk => hdmi_clk,
-	    data_clk => data_clk,
-	    --
-	    s_axi_aclk => m_axi1a_aclk(4),
-	    s_axi_areset_n => m_axi1a_areset_n(4),
-	    --
-	    s_axi_ro => m_axi1a_ri(4),
-	    s_axi_ri => m_axi1a_ro(4),
-	    s_axi_wo => m_axi1a_wi(4),
-	    s_axi_wi => m_axi1a_wo(4) );
+    lj92_pll_inst : entity work.lj92_pll (RTL_215MHZ)
+    port map (
+        ref_clk_in => clk_100,
+        --
+        pll_locked => lj92_pll_locked,
+        pll_pwrdwn => lj92_pll_pwrdwn,
+        pll_reset => lj92_pll_reset,
+        --
+        lj92_clk => lj92_clk);
 
     --------------------------------------------------------------------
     -- AXI3 CMV Interconnect
@@ -2366,17 +2295,10 @@ begin
 
     led_out(0) <= cmv_pll_locked;
     led_out(1) <= lvds_pll_locked and idelay_valid;
-    led_out(2) <= hdmi_pll_locked;
+    led_out(2) <= lj92_pll_locked;
 
     led_out(3) <= cmv_active;
     led_out(4) <= wdata_full;
-
-    div_hdmi_inst : entity work.async_div
-	generic map (
-	    STAGES => 28 )
-	port map (
-	    clk_in => hdmi_clk,
-	    clk_out => led_out(5) );
 
     div_lvds_inst0 : entity work.async_div
 	generic map (
@@ -2514,600 +2436,11 @@ begin
     reg_igen(0) <= x"47454E" & x"0" &
 		   std_logic_vector(to_unsigned(GEN_SPLIT, 4));
     reg_igen(1) <= raddr_in(31 downto 0);
-    reg_igen(2) <= raddr_sel & "00" & reader_inactive &		-- 8bit
-		   "00" & fifo_hdmi_wrerr & fifo_hdmi_rderr &	-- 4bit
-		   fifo_hdmi_full & fifo_hdmi_high &		-- 2bit
-		   fifo_hdmi_low & fifo_hdmi_empty &		-- 2bit
-		   x"0000";					-- 16bit
-
-    --------------------------------------------------------------------
-    -- Color Matrix Register File
-    --------------------------------------------------------------------
-
-    reg_file_inst3 : entity work.reg_file
-	generic map (
-	    REG_SPLIT => MAT_SPLIT,
-	    OREG_SIZE => OMAT_SIZE,
-	    IREG_SIZE => IMAT_SIZE )
-	port map (
-	    s_axi_aclk => m_axi1a_aclk(2),
-	    s_axi_areset_n => m_axi1a_areset_n(2),
-	    --
-	    s_axi_ro => m_axi1a_ri(2),
-	    s_axi_ri => m_axi1a_ro(2),
-	    s_axi_wo => m_axi1a_wi(2),
-	    s_axi_wi => m_axi1a_wo(2),
-	    --
-	    oreg => reg_omat,
-	    ireg => reg_imat );
-
-    reg_imat(0) <= x"4D4154" & x"0" &
-		   std_logic_vector(to_unsigned(MAT_SPLIT, 4));
-    -- reg_imat(1) <= std_logic_vector(resize(signed(mat_v_out(0)), 32));
-    -- reg_imat(2) <= std_logic_vector(resize(signed(mat_v_out(1)), 32));
-    -- reg_imat(3) <= std_logic_vector(resize(signed(mat_v_out(2)), 32));
-
-
-    --------------------------------------------------------------------
-    -- BRAM LUT Register File
-    --------------------------------------------------------------------
-
-    reg_lut_inst1 : entity work.reg_lut_12x16
-	generic map (
-	    LUT_COUNT => DLUT_COUNT )
-	port map (
-	    s_axi_aclk => m_axi1a_aclk(3),
-	    s_axi_areset_n => m_axi1a_areset_n(3),
-	    --
-	    s_axi_ro => m_axi1a_ri(3),
-	    s_axi_ri => m_axi1a_ro(3),
-	    s_axi_wo => m_axi1a_wi(3),
-	    s_axi_wi => m_axi1a_wo(3),
-	    --
-	    lut_clk => data_clk,
-	    lut_addr => dlut_addr,
-	    lut_dout => dlut_dout );
-
-    --------------------------------------------------------------------
-    -- BRAM LUT Register File
-    --------------------------------------------------------------------
-
-    reg_mem_inst : entity work.reg_mem
-	generic map (
-	    DATA_WIDTH => 9,
-	    ADDR_WIDTH => 12 )
-	port map (
-	    s_axi_aclk => m_axi1a_aclk(5),
-	    s_axi_areset_n => m_axi1a_areset_n(5),
-	    --
-	    s_axi_ro => m_axi1a_ri(5),
-	    s_axi_ri => m_axi1a_ro(5),
-	    s_axi_wo => m_axi1a_wi(5),
-	    s_axi_wi => m_axi1a_wo(5),
-	    --
-	    lut_clk => data_clk,
-	    lut_addr => dmem_addr,
-	    lut_dout => dmem_dout );
-
-    --------------------------------------------------------------------
-    -- HDMI Scan Generator
-    --------------------------------------------------------------------
-
-    hdmi_scan_inst : entity work.scan_hdmi
-	port map (
-	    clk => data_clk,
-	    reset_n => '1',
-	    --
-	    total_w => reg_oscn(0)(11 downto 0),
-	    total_h => reg_oscn(0)(27 downto 16),
-	    total_f => reg_oscn(1)(11 downto 0),
-	    --
-	    hdisp_s => reg_oscn(2)(11 downto 0),
-	    hdisp_e => reg_oscn(2)(27 downto 16),
-	    vdisp_s => reg_oscn(3)(11 downto 0),
-	    vdisp_e => reg_oscn(3)(27 downto 16),
-	    --
-	    hsync_s => reg_oscn(4)(11 downto 0),
-	    hsync_e => reg_oscn(4)(27 downto 16),
-	    vsync_s => reg_oscn(5)(11 downto 0),
-	    vsync_e => reg_oscn(5)(27 downto 16),
-	    --
-	    hdata_s => reg_oscn(6)(11 downto 0),
-	    hdata_e => reg_oscn(6)(27 downto 16),
-	    vdata_s => reg_oscn(7)(11 downto 0),
-	    vdata_e => reg_oscn(7)(27 downto 16),
-	    --
-	    event_0 => reg_oscn(8)(11 downto 0),
-	    event_1 => reg_oscn(8)(27 downto 16),
-	    event_2 => reg_oscn(9)(11 downto 0),
-	    event_3 => reg_oscn(9)(27 downto 16),
-	    --
-	    event_4 => reg_oscn(10)(11 downto 0),
-	    event_5 => reg_oscn(10)(27 downto 16),
-	    event_6 => reg_oscn(11)(11 downto 0),
-	    event_7 => reg_oscn(11)(27 downto 16),
-	    --
-	    pream_s => reg_oscn(16)(11 downto 0),
-	    guard_s => reg_oscn(16)(27 downto 16),
-	    terc4_e => reg_oscn(17)(11 downto 0),
-	    guard_e => reg_oscn(17)(27 downto 16),
-	    --
-	    disp => scan_disp,
-	    sync => scan_sync,
-	    data => scan_data,
-	    ctrl => scan_ctrl,
-	    --
-	    hevent => scan_hevent,
-	    vevent => scan_vevent,
-	    --
-	    hcnt => scan_hcnt,
-	    vcnt => scan_vcnt,
-	    fcnt => scan_fcnt );
-
-    scan_event_inst : entity work.scan_event
-	port map (
-	    clk => data_clk,
-	    reset_n => '1',
-	    --
-	    disp_in => scan_disp,
-	    sync_in => scan_sync,
-	    data_in => scan_data,
-	    ctrl_in => scan_ctrl,
-	    --
-	    hevent => scan_hevent,
-	    vevent => scan_vevent,
-	    --
-	    hcnt_in => scan_hcnt,
-	    vcnt_in => scan_vcnt,
-	    fcnt_in => scan_fcnt,
-	    --
-	    data_eo => scan_eo,
-	    econf => scan_econf,
-	    --
-	    hsync => hd_hsync,
-	    vsync => hd_vsync,
-	    pream => hd_pream,
-	    guard => hd_guard,
-	    disp => hd_de,
-	    terc => hd_terc,
-	    data => event_data,
-	    --
-	    event => event_event,
-	    --
-	    hcnt => event_hcnt,
-	    vcnt => event_vcnt,
-	    fcnt => event_fcnt );
-
-    scan_eo <= reg_oscn(2)(0) xor reg_oscn(14)(0);
-    scan_econf <= reg_oscn(13) & reg_oscn(12);
-
-    event_cr <= x"FFF" when event_event(1) = '1' else x"000";
-    event_cg <= x"FFF" when event_event(2) = '1' else x"000";
-    event_cb <= x"FFF" when event_event(3) = '1' else x"000";
-
---  hd_edata <= event_cg & event_cr when event_event(0) = '1'
---	else x"4040" when event_data(0) = '0'
---	else hdmi_in(51 downto 44) & hdmi_in(63 downto 56);
-
---  hd_odata <= event_cg & event_cb when event_event(0) = '1'
---	else x"4040" when event_data(0) = '0'
---	else hdmi_in(39 downto 32) & hdmi_in(27 downto 20);
-
-
-    matrix_inst : entity work.color_mat_4x4
-	port map (
-	    clk => data_clk,
-	    clip => reg_oscn(14)(5 downto 4),
-	    bypass => reg_oscn(14)(8),
-	    --
-	    matrix => mat_values,
-	    adjust => mat_adjust,
-	    offset => mat_offset,
-	    --
-	    v_in => mat_v_in,
-	    v_out => mat_v_out );
-
-    mat_v_in <= ( hdmi_ch0, hdmi_ch1, hdmi_ch2, hdmi_ch3 );
-
-    mat_values <= (
-	0 => ( reg_omat(0)(15 downto 0),
-	       reg_omat(1)(15 downto 0),
-	       reg_omat(2)(15 downto 0),
-	       reg_omat(3)(15 downto 0) ),
-	1 => ( reg_omat(4)(15 downto 0),
-	       reg_omat(5)(15 downto 0),
-	       reg_omat(6)(15 downto 0),
-	       reg_omat(7)(15 downto 0) ),
-	2 => ( reg_omat(8)(15 downto 0),
-	       reg_omat(9)(15 downto 0),
-	       reg_omat(10)(15 downto 0),
-	       reg_omat(11)(15 downto 0) ),
-	3 => ( reg_omat(12)(15 downto 0),
-	       reg_omat(13)(15 downto 0),
-	       reg_omat(14)(15 downto 0),
-	       reg_omat(15)(15 downto 0) ));
-
-    mat_adjust <= (
-	0 => ( reg_omat(16)(15 downto 0),
-	       reg_omat(17)(15 downto 0),
-	       reg_omat(18)(15 downto 0),
-	       reg_omat(19)(15 downto 0) ),
-	1 => ( reg_omat(20)(15 downto 0),
-	       reg_omat(21)(15 downto 0),
-	       reg_omat(22)(15 downto 0),
-	       reg_omat(23)(15 downto 0) ),
-	2 => ( reg_omat(24)(15 downto 0),
-	       reg_omat(25)(15 downto 0),
-	       reg_omat(26)(15 downto 0),
-	       reg_omat(27)(15 downto 0) ),
-	3 => ( reg_omat(28)(15 downto 0),
-	       reg_omat(29)(15 downto 0),
-	       reg_omat(30)(15 downto 0),
-	       reg_omat(31)(15 downto 0) ));
-
-    mat_offset <= (
-	reg_omat(32)(15 downto 0),
-	reg_omat(33)(15 downto 0),
-	reg_omat(34)(15 downto 0),
-	reg_omat(35)(15 downto 0) );
-
-    dlut_addr(0) <= mat_v_out(0);
-    dlut_addr(1) <= mat_v_out(1);
-    dlut_addr(2) <= mat_v_out(2);
-    dlut_addr(3) <= mat_v_out(3);
-
-    ch4_delay_inst : entity work.sync_delay
-	generic map (
-	    STAGES => 10,
-	    DATA_WIDTH => 16 )
-	port map (
-	    clk => data_clk,
-	    data_in => hdmi_ch4,
-	    data_out => hdmi_ch4_d );
-
-	
-    overlay_proc : process (data_clk)
-	variable a_v : unsigned(11 downto 0);
-	variable b_v : unsigned(11 downto 0);
-	variable c_v : unsigned(3 downto 0);
-	variable o_v : unsigned(11 downto 0);
-
-	type ci_t is array (natural range <>) of natural range 0 to 11;
-
-	constant ci_c : ci_t(3 downto 0) := ( 8, 4, 0, 4 );
-    begin
-	if rising_edge(data_clk) then
-	    dlut_dout_d <= dlut_dout;
-	    for I in 3 downto 0 loop
-		a_v := unsigned(dlut_dout_d(I)(15 downto 4));
-		b_v := unsigned(hdmi_ch4_d(11 downto 0));
-		c_v := unsigned(hdmi_ch4_d(ci_c(I)+3 downto ci_c(I)));
-		
-		case hdmi_ch4_d(15 downto 12) is
-		    when "0001" =>
-		    	o_v := b_v;
-
-		    when "0010" =>
-		    	o_v := c_v & c_v & c_v;
-
-		    when "0011" =>
-		    	o_v := not a_v;
-
-
-		    when "0100" =>
-		    	o_v := x"000" when scan_fcnt(4) else x"FFF";
-
-		    when "0101" =>
-		    	o_v := shift_right(a_v, 1) + shift_right(b_v, 1);
-
-		    when "0110" =>
-		    	o_v := shift_right(a_v, 1) + shift_right(c_v & c_v & c_v, 1);
-
-		    when "0111" =>
-		    	o_v := shift_right(not a_v, 1) + shift_right(b_v, 1);
-		    
-
-		    when "1000" =>
-		    	o_v := x"000" when scan_fcnt(5) else x"FFF";
-
-		    when "1001" =>
-		    	o_v := b_v when scan_fcnt(5) else a_v;
-
-		    when "1010" =>
-		    	o_v := c_v & c_v & c_v when scan_fcnt(5) else a_v;
-
-		    when "1011" =>
-		    	o_v := not a_v when scan_fcnt(5) else a_v;
-
-
-		    when "1100" =>
-		    	o_v := x"000" when scan_fcnt(3) else x"FFF";
-
-		    when "1101" =>
-		    	o_v := x"000" when scan_fcnt(2) else x"FFF";
-
-		    when "1110" =>
-		    	o_v := x"000" when scan_fcnt(1) else x"FFF";
-
-		    when "1111" =>
-		    	o_v := x"000" when scan_fcnt(0) else x"FFF";
-			
-		    when others =>
-			o_v := a_v;
-		end case;
-
-		hdmi_out(I*16+15 downto I*16) <=
-		    std_logic_vector(o_v) & x"0";
-	    end loop;	
-	    -- conv_out <= conv_ch0 & conv_ch1 & conv_ch2 & conv_ch3;
-	    -- hdmi_out <= conv_out;
-	    -- hd_code <= hdmi_out;
-	end if;
-    end process;
-    
-    out_delay_inst : entity work.sync_delay
-	generic map (
-	    STAGES => 4,
-	    DATA_WIDTH => 64 )
-	port map (
-	    clk => data_clk,
-	    data_in => hdmi_out,
-	    data_out => hd_code );
-
-    -- hdmi_enable <= (event_data(0) and event_data(1))
-    hdmi_enable <= event_data(0) or event_event(4);
-    -- hdmi_enable <= (event_data(0) and event_data(1)) or event_event(4);
-
-
-    --------------------------------------------------------------------
-    -- TMDS Output
-    --------------------------------------------------------------------
-
-    OBUFDS_clk_inst0 : OBUFDS
-	port map (
-	    O => hdmi_south_clk_p,
-	    OB => hdmi_south_clk_n,
-	    I => tmds_south_io(3) );
-
-    OBUFDS_GEN0: for I in 2 downto 0 generate
-	OBUFDS_data_inst0 : OBUFDS
-	    port map (
-		O => hdmi_south_d_p(I),
-		OB => hdmi_south_d_n(I),
-		I => tmds_south_io(2 - I) );
-    end generate;
-
-/*  OBUFDS_clk_inst1 : OBUFDS
-	port map (
-	    O => hdmi_north_clk_p,
-	    OB => hdmi_north_clk_n,
-	    I => tmds_north_io(3) );
-
-    OBUFDS_GEN1: for I in 2 downto 0 generate
-	OBUFDS_data_inst1 : OBUFDS
-	    port map (
-		O => hdmi_north_d_p(I),
-		OB => hdmi_north_d_n(I),
-		I => tmds_north_io(2 - I) );
-    end generate;	*/
-
-    dil_proc : process (hdmi_clk)
-	variable dil_addr_v : unsigned (11 downto 0)
-	    := (others => '0');
-    begin
-	if rising_edge(hdmi_clk) then
-	    if hd_vsync then
-		if hd_terc then
-		    dil_addr_v := dil_addr_v + '1';
-		end if;
-	    else
-		dil_addr_v := (others => '0');
-	    end if;
-	    dmem_addr <= std_logic_vector(dil_addr_v);
-	end if;
-    end process;
-
-    rgb_proc : process (hdmi_clk)
-
-	variable cond : boolean;
-	
-	variable hd_r_d : std_logic_vector(11 downto 0);
-	variable hd_b_d : std_logic_vector(11 downto 0);
-
-	function "*" ( a : std_logic_vector; b : std_logic_vector )
-	    return std_logic_vector is
-
-	    variable res_v : std_logic_vector(a'high*2+1 downto a'low*2);
-	    variable J : natural;
-	begin
-	    for I in a'high downto a'low loop
-		J := I - a'low + b'low;
-		res_v(I*2+1) := a(I);
-		res_v(I*2) := b(J);
-	    end loop;
-	    return res_v;
-	end function;
-
-	function sel ( c : boolean; 
-	    a : std_logic_vector;
-	    b : std_logic_vector )
-	    return std_logic_vector is
-	begin
-	    if c then
-	    	return a;
-	    else
-	    	return b;
-	    end if;
-	end function;
-
-    begin
-	if rising_edge(hdmi_clk) then
-
-	    cond := scan_fcnt(0) = '1' when reg_oscn(15)(25) = '1'
-	    	else reg_oscn(15)(24) = '1';
-
-	    case reg_oscn(15)(27 downto 26) is
-		when "00" =>	-- normal output
-		    rgb_data(0) <= hd_r(11 downto 4);
-		    rgb_data(1) <= hd_g1(11 downto 4);
-		    rgb_data(2) <= hd_b(11 downto 4);
-
-		when "01" =>	-- r/g1, b/g2 alternate
-		    rgb_data(0) <= sel(cond,
-		    	 hd_r(11 downto 4), hd_b(11 downto 4));
-		    rgb_data(1) <= sel(cond,
-		    	 hd_g1(3 downto 0) * hd_r(3 downto 0), 
-			 hd_g2(3 downto 0) * hd_b(3 downto 0));
-		    rgb_data(2) <= sel(cond,
-		    	 hd_g1(11 downto 4), hd_g2(11 downto 4));
-			 
-		when "10" =>	-- g1/g2, r/b fixed (AlexML)	
-		    rgb_data(0) <= sel(cond,
-		    	 hd_r(11 downto 4), hd_r_d(11 downto 4));
-		    rgb_data(1) <= sel(cond,
-		    	 hd_g1(11 downto 4), hd_g2(11 downto 4));
-		    rgb_data(2) <= sel(cond,
-		    	 hd_b(11 downto 4), hd_b_d(11 downto 4));
-
-		when "11" =>	-- mix and match
-		    rgb_data(0) <= sel(cond,
-		    	hd_r(11 downto 4),
-			hd_b(11 downto 8) & hd_r(3 downto 0));
-		    rgb_data(1) <= sel(cond,
-		    	hd_g1(11 downto 4),
-			hd_g2(11 downto 8) * hd_g1(3 downto 0));
-		    rgb_data(2) <= sel(cond,
-		    	hd_b(11 downto 4),
-			hd_r(11 downto 8) & hd_b(3 downto 0));
-
-		-- when others =>
-	    end case;
-
-	    hd_r_d := hd_r;
-	    hd_b_d := hd_b;
-
-	    -- dil_data <= scan_hcnt(8 downto 0);
-	    dil_data <= dmem_dout;
-	    dil_de <= hd_terc;
-
-	    rgb_de <= hd_de;
-
-	    rgb_hsync <= hd_hsync;
-	    rgb_vsync <= hd_vsync;
-	    rgb_pream <= hd_pream;
-	    rgb_guard <= hd_guard;
-
-	end if;
-    end process;
-
-/*  rgb_dvid_inst : entity work.rgb_dvid
-	port map (
-	    pix_clk => hdmi_clk,
-	    bit_clk => tmds_clk,
-	    --
-	    enable => tmds_enable,
-	    reset => tmds_reset,
-	    --
-	    rgb => rgb_data,
-	    --
-	    de => rgb_de,
-	    hsync => rgb_hsync,
-	    vsync => rgb_vsync,
-	    --
-	    d0idx => reg_oscn(15)(1 downto 0),
-	    d1idx => reg_oscn(15)(3 downto 2),
-	    d2idx => reg_oscn(15)(5 downto 4),
-	    clidx => reg_oscn(15)(7 downto 6),
-	    --
-	    d0inv => reg_oscn(15)(8),
-	    d1inv => reg_oscn(15)(9),
-	    d2inv => reg_oscn(15)(10),
-	    clinv => reg_oscn(15)(11),
-	    --
-	    tmds => tmds_io );		*/
-
-
-    tmds_reset_proc : process (hdmi_clk)
-    begin
-	if rising_edge(hdmi_clk) then
-	    tmds_reset <= reg_oscn(15)(17);
-	end if;
-    end process;
-
-    tmds_enable <= reg_oscn(15)(16);
-
-    rgb_hdmi_inst0 : entity work.rgb_hdmi
-	port map (
-	    pix_clk => hdmi_clk,
-	    bit_clk => tmds_clk,
-	    --
-	    enable => tmds_enable,
-	    reset => tmds_reset,
-	    --
-	    rgb => rgb_data,
-	    data => dil_data,
-	    --
-	    de => dil_de & rgb_de,
-	    pream => rgb_pream,
-	    guard => rgb_guard,
-	    hsync => rgb_hsync,
-	    vsync => rgb_vsync,
-	    --
-	    d0idx => reg_oscn(15)(1 downto 0),
-	    d1idx => reg_oscn(15)(3 downto 2),
-	    d2idx => reg_oscn(15)(5 downto 4),
-	    clidx => reg_oscn(15)(7 downto 6),
-	    --
-	    d0inv => not reg_oscn(15)(8),
-	    d1inv => reg_oscn(15)(9),
-	    d2inv => reg_oscn(15)(10),
-	    clinv => not reg_oscn(15)(11),
-	    --
-	    tmds => tmds_south_io );
-
-    rgb_hdmi_inst1 : entity work.rgb_hdmi
-	port map (
-	    pix_clk => hdmi_clk,
-	    bit_clk => tmds_clk,
-	    --
-	    enable => tmds_enable,
-	    reset => tmds_reset,
-	    --
-	    rgb => rgb_data,
-	    data => dil_data,
-	    --
-	    de => dil_de & rgb_de,
-	    pream => rgb_pream,
-	    guard => rgb_guard,
-	    hsync => rgb_hsync,
-	    vsync => rgb_vsync,
-	    --
-	    d0idx => reg_oscn(15)(1 downto 0),
-	    d1idx => reg_oscn(15)(3 downto 2),
-	    d2idx => reg_oscn(15)(5 downto 4),
-	    clidx => reg_oscn(15)(7 downto 6),
-	    --
-	    d0inv => reg_oscn(15)(8),
-	    d1inv => reg_oscn(15)(9),
-	    d2inv => reg_oscn(15)(10),
-	    clinv => reg_oscn(15)(11),
-	    --
-	    tmds => debug_tmds);
-	    -- tmds => tmds_north_io );
-
-    debug_data <= rgb_vsync & rgb_guard(2 downto 0);
-    -- debug_data <= scan_hcnt(3 downto 0);
-
-    debug_delay_inst : entity work.sync_delay
-	generic map (
-	    STAGES => 3,
-	    DATA_WIDTH => debug'length )
-	port map (
-	    clk => hdmi_clk,
-	    data_in => debug_data,
-	    data_out => debug );
-
-
+    reg_igen(2) <= raddr_sel & "00" & reader_inactive &     -- 8bit
+           "00" & fifo_lj92_wrerr & fifo_lj92_rderr &   -- 4bit
+           fifo_lj92_full & fifo_lj92_high &        -- 2bit
+           fifo_lj92_low & fifo_lj92_empty &        -- 2bit
+           x"0000";                 -- 16bit
 
     --------------------------------------------------------------------
     -- Address Generator
@@ -3145,55 +2478,97 @@ begin
     raddr_empty <= raddr_match or raddr_block;
 
     --------------------------------------------------------------------
-    -- HDMI FIFO
+    -- LJ92 FIFO
     --------------------------------------------------------------------
 
-    FIFO_hdmi_inst : FIFO_DUALCLOCK_MACRO
-	generic map (
-	    DEVICE => "7SERIES",
-	    DATA_WIDTH => DATA_WIDTH,
-	    ALMOST_FULL_OFFSET => x"020",
-	    ALMOST_EMPTY_OFFSET => x"020",
-	    FIFO_SIZE => "36Kb",
-	    FIRST_WORD_FALL_THROUGH => TRUE )
-	port map (
-	    DI => fifo_hdmi_in,
-	    WRCLK => fifo_hdmi_wclk,
-	    WREN => fifo_hdmi_wen,
-	    FULL => fifo_hdmi_full,
-	    ALMOSTFULL => fifo_hdmi_high,
-	    WRERR => fifo_hdmi_wrerr,
-	    WRCOUNT => fifo_hdmi_wrcount,
-	    --
-	    DO => fifo_hdmi_out,
-	    RDCLK => fifo_hdmi_rclk,
-	    RDEN => fifo_hdmi_ren,
-	    EMPTY => fifo_hdmi_empty,
-	    ALMOSTEMPTY => fifo_hdmi_low,
-	    RDERR => fifo_hdmi_rderr,
-	    RDCOUNT => fifo_hdmi_rdcount,
-	    --
-	    RST => fifo_hdmi_rst );
+    FIFO_lj92_inst : FIFO_DUALCLOCK_MACRO
+    generic map (
+        DEVICE => "7SERIES",
+        DATA_WIDTH => DATA_WIDTH,
+        ALMOST_FULL_OFFSET => x"020",
+        ALMOST_EMPTY_OFFSET => x"020",
+        FIFO_SIZE => "36Kb",
+        FIRST_WORD_FALL_THROUGH => TRUE )
+    port map (
+        DI => fifo_lj92_in,
+        WRCLK => fifo_lj92_wclk,
+        WREN => fifo_lj92_wen,
+        FULL => fifo_lj92_full,
+        ALMOSTFULL => fifo_lj92_high,
+        WRERR => fifo_lj92_wrerr,
+        WRCOUNT => fifo_lj92_wrcount,
+        --
+        DO => fifo_lj92_out,
+        RDCLK => fifo_lj92_rclk,
+        RDEN => fifo_lj92_ren,
+        EMPTY => fifo_lj92_empty,
+        ALMOSTEMPTY => fifo_lj92_low,
+        RDERR => fifo_lj92_rderr,
+        RDCOUNT => fifo_lj92_rdcount,
+        --
+        RST => fifo_lj92_rst );
 
     fifo_reset_inst1 : entity work.fifo_reset
-	port map (
-	    rclk => fifo_hdmi_rclk,
-	    wclk => fifo_hdmi_wclk,
-	    reset => fifo_hdmi_reset,
-	    --
-	    fifo_rst => fifo_hdmi_rst,
-	    fifo_rrdy => fifo_hdmi_rrdy,
-	    fifo_wrdy => fifo_hdmi_wrdy );
+    port map (
+        rclk => fifo_lj92_rclk,
+        wclk => fifo_lj92_wclk,
+        reset => fifo_lj92_reset,
+        --
+        fifo_rst => fifo_lj92_rst,
+        fifo_rrdy => fifo_lj92_rrdy,
+        fifo_wrdy => fifo_lj92_wrdy );
 
-    fifo_hdmi_wclk <= rdata_clk;
-    fifo_hdmi_wen <= rdata_enable when fifo_hdmi_wrdy = '1' else '0';
-    rdata_full <= fifo_hdmi_high when fifo_hdmi_wrdy = '1' else '1';
-    fifo_hdmi_in <= rdata_out;
+    fifo_lj92_wclk <= rdata_clk;
+    fifo_lj92_wen <= rdata_enable when fifo_lj92_wrdy = '1' else '0';
+    rdata_full <= fifo_lj92_high when fifo_lj92_wrdy = '1' else '1';
+    fifo_lj92_in <= rdata_out;
 
-    fifo_hdmi_rclk <= data_clk;
-    fifo_hdmi_ren <= hdmi_enable when fifo_hdmi_rrdy = '1' else '0';
-    rdata_empty <= fifo_hdmi_empty when fifo_hdmi_rrdy = '1' else '1';
-    hdmi_in <= fifo_hdmi_out;
+    fifo_lj92_rclk <= lj92_clk;
+    fifo_lj92_ren <= lj92_enable when fifo_lj92_rrdy = '1' else '0';
+    rdata_empty <= fifo_lj92_empty when fifo_lj92_rrdy = '1' else '1';
+    lj92_in <= fifo_lj92_out;
+
+    --------------------------------------------------------------------
+    -- LJ92 FIFO
+    --------------------------------------------------------------------
+
+    COMPONENT LJ92
+    PORT (
+    s_tdata  : in  std_logic_vector (63 downto 0);
+    s_tvalid : in  std_logic;
+    s_tready : out std_logic;
+    --
+    m_tdata  : out std_logic_vector (39 downto 0);
+    m_tvalid : out std_logic;
+    m_tready : in  std_logic;
+    --
+    full_clk : in std_logic;
+    full_rst : in std_logic );
+    END COMPONENT;
+
+    lj92_inst : LJ92
+    PORT MAP(
+    s_tdata  => lj92_s_tdata,
+    s_tvalid => lj92_s_tvalid,
+    s_tready => lj92_s_tready,
+    --
+    m_tdata  => lj92_m_tdata,
+    m_tvalid => lj92_m_tvalid,
+    m_tready => lj92_m_tready,
+    --
+    full_clk => lj92_full_clk,
+    full_rst => lj92_full_rst );
+
+    lj92_s_tdata <= lj92_in;
+    lj92_s_tvalid <= not rdata_empty;
+    lj92_enable <= lj92_s_tready;
+
+    /* <= lj92_m_tdata;
+      <= lj92_m_tvalid; */
+    lj92_m_tready <= 0;
+
+    lj92_full_clk <= lj92_clk;
+    lj92_full_rst <= 0;
 
     --------------------------------------------------------------------
     -- AXIHP Reader
